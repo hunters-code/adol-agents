@@ -42,8 +42,8 @@ negotiator_agent = Agent(
     name="negotiator_agent",
     seed="marketplace_negotiator_seed",
     port=8000,
-    endpoint=["http://localhost:8000/submit"],
     mailbox=True,
+    network='fetchai_testnet',
 )
 
 # Global storage for conversations
