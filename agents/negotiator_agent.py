@@ -43,7 +43,6 @@ negotiator_agent = Agent(
     seed="marketplace_negotiator_seed",
     port=8000,
     mailbox=True,
-    network='fetchai_testnet',
 )
 
 # Global storage for conversations
