@@ -1,26 +1,29 @@
 from datetime import datetime
 from uuid import uuid4
-import json
 import re
-from typing import Dict, List, Optional
+import os
+from typing import Dict, Optional
 
+from dotenv import load_dotenv
 from openai import OpenAI
 from uagents import Context, Protocol, Agent
 from uagents_core.contrib.protocols.chat import (
     ChatAcknowledgement,
     ChatMessage,
-    EndSessionContent,
     TextContent,
     chat_protocol_spec,
 )
 
-# Configuration for API endpoints
-API_BASE_URL = "https://dummyjson.com/c/a2d5-5008-4347-9d22" # will change with ICP backend
+# Load environment variables from .env file
+load_dotenv()
 
-# Initialize OpenAI client
+# Configuration for API endpoints
+API_BASE_URL = os.getenv("API_BASE_URL", "https://dummyjson.com/c/a2d5-5008-4347-9d22")
+
+# Initialize OpenAI client with environment variables
 client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key="test",
+    base_url=os.getenv("OPENAI_BASE_URL", "https://openrouter.ai/api/v1"),
+    api_key=os.getenv("OPENAI_API_KEY"),
 )
 
 # Create the agent
@@ -350,13 +353,13 @@ Your report to the seller in English"""
 
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
             messages=[
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": user_content},
             ],
-            max_tokens=500,
-            temperature=0.7,
+            max_tokens=int(os.getenv("OPENAI_MAX_TOKENS", "500")),
+            temperature=float(os.getenv("OPENAI_TEMPERATURE", "0.7")),
         )
 
         ai_response = response.choices[0].message.content
@@ -559,7 +562,6 @@ Example: PROD123 Hi, is this available?"""
             msg_id=uuid4(),
             content=[
                 TextContent(type="text", text=response_text),
-                EndSessionContent(type="end-session"),
             ],
         ),
     )
@@ -575,6 +577,17 @@ async def handle_ack(ctx: Context, sender: str, msg: ChatAcknowledgement):
 agent.include(protocol, publish_manifest=True)
 
 if __name__ == "__main__":
+    # Check if required environment variables are set
+    required_vars = ["OPENAI_API_KEY"]
+    missing_vars = [var for var in required_vars if not os.getenv(var)]
+
+    if missing_vars:
+        print("❌ Error: Missing required environment variables:")
+        for var in missing_vars:
+            print(f"   - {var}")
+        print("\nPlease create a .env file with the required variables.")
+        exit(1)
+
     print("🤖 Marketplace Negotiation Agent Starting...")
     print("📱 This agent handles marketplace sales negotiations using chat protocol")
     print("🔗 Item details are fetched from API using Product ID")
@@ -583,5 +596,5 @@ if __name__ == "__main__":
     print("💬 Connect via AgentVerse to start negotiating!")
     print("=" * 60)
     print(f"📡 API Endpoint: {API_BASE_URL}")
-    print("🔑 Make sure to set your API credentials!")
+    print("🔑 Environment variables loaded successfully!")
     agent.run()
