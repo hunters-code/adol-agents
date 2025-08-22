@@ -1,408 +1,565 @@
-from uagents import Agent, Context, Model
-from openai import OpenAI
-import requests
-import json
-import re
 import os
-from typing import Optional, Dict, Any
-from datetime import datetime
-import time
-from pydantic import Field
-from dotenv import load_dotenv, find_dotenv
+import re
+import logging
+from datetime import datetime, timezone
+from uuid import uuid4
+from typing import Dict, Optional
+from uagents import Agent, Context, Protocol, Model
+from uagents_core.contrib.protocols.chat import (
+    ChatMessage,
+    ChatAcknowledgement,
+    TextContent,
+    EndSessionContent,
+    chat_protocol_spec,
+)
+from openai import OpenAI
+import aiohttp
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-class NegotiationRequest(Model):
-    message: str = Field(description="Buyer's message")
-    buyer_id: str = Field(default="buyer", description="Buyer identifier")
-    title: str = Field(description="Title of the item being sold")
-    description: str = Field(description="Detailed description of the item")
-    minimum_price: float = Field(description="Minimum acceptable price in Rupiah")
-    maximum_price: float = Field(description="Maximum asking price in Rupiah")
-    condition: str = Field(default="Kondisi baik", description="Item condition")
-    location: str = Field(default="Jakarta", description="Item location")
-    delivery_info: str = Field(default="COD/Pickup", description="Delivery options")
+# Environment variables
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "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")
+AGENT_SEED = os.getenv("AGENT_SEED", "marketplace_negotiator_chat_seed")
+AGENT_PORT = int(os.getenv("AGENT_PORT", "8000"))
+ICP_CANISTER_URL = os.getenv("ICP_CANISTER_URL", "https://ujk5g-liaaa-aaaam-aeocq-cai.ic0.app")
 
-
-class NegotiationResponse(Model):
-    message_to_buyer: str = Field(description="Response to buyer")
-    message_to_seller: str = Field(description="Report to seller")
-    deal_status: str = Field(description="Status of negotiation")
-    counter_offer: float = Field(description="Counter offer amount in Rupiah")
-    accepted: bool = Field(description="Whether deal was accepted")
-    timestamp: int = Field(description="Response timestamp")
-
-
-# Load API key from environment
-load_dotenv(find_dotenv())
-
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-
-# Create the marketplace negotiator agent
-negotiator_agent = Agent(
-    name="negotiator_agent",
-    seed="marketplace_negotiator_seed",
-    port=8000,
-    mailbox=True,
+# Initialize OpenAI client with OpenRouter
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY,
 )
 
-# Global storage for conversations
-conversations = {}
-stats = {"total_negotiations": 0, "deals_made": 0, "start_time": datetime.now()}
+# Create the marketplace negotiator agent with chat protocol
+agent = Agent(
+    name="marketplace_negotiator",
+    seed=AGENT_SEED,
+    port=AGENT_PORT,
+    endpoint=[f"http://localhost:{AGENT_PORT}/submit"],
+    mailbox=True,
+    publish_agent_details=True,
+)
 
+# Initialize chat protocol
+chat_proto = Protocol(spec=chat_protocol_spec)
 
-def generate_response_with_gpt(prompt: str) -> str:
-    """Generate response using OpenRouter API"""
+# Global state management
+item_details = {}
+seller_address = None
+
+# ICP Backend Integration Functions
+async def save_conversation_to_icp(conversation_id: str, conversation_data: dict):
+    """Save conversation state to ICP canister"""
     try:
-        response = requests.post(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            data=json.dumps(
-                {
-                    "model": "openai/gpt-3.5-turbo",
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": "You are a professional marketplace sales assistant for Indonesian online marketplace. Be friendly, professional, and strategic in your negotiations. Respond in the same language as the buyer's message (Indonesian or English). Use Indonesian Rupiah (Rp) for all prices.",
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    "max_tokens": 300,
-                    "temperature": 0.7,
-                }
-            ),
-        )
-
-        response_data = response.json()
-        if "choices" in response_data and len(response_data["choices"]) > 0:
-            return response_data["choices"][0]["message"]["content"]
-        else:
-            return "Error: No content in API response"
-
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                "conversation_id": conversation_id,
+                "data": conversation_data,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            async with session.post(
+                f"{ICP_CANISTER_URL}/api/conversations",
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                if response.status == 200:
+                    logger.info(f"✅ Conversation {conversation_id} saved to ICP")
+                    return True
+                else:
+                    logger.error(f"❌ Failed to save to ICP: {response.status}")
+                    return False
     except Exception as e:
-        return f"Error generating response: {str(e)}"
+        logger.error(f"❌ Error saving to ICP: {e}")
+        return False
 
+async def load_conversation_from_icp(conversation_id: str) -> Optional[dict]:
+    """Load conversation state from ICP canister"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{ICP_CANISTER_URL}/api/conversations/{conversation_id}",
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    logger.info(f"✅ Conversation {conversation_id} loaded from ICP")
+                    return data.get("data", {})
+                elif response.status == 404:
+                    logger.info(f"📝 New conversation {conversation_id}")
+                    return {"messages": [], "offers": [], "status": "active"}
+                else:
+                    logger.error(f"❌ Failed to load from ICP: {response.status}")
+                    return None
+    except Exception as e:
+        logger.error(f"❌ Error loading from ICP: {e}")
+        return None
 
-def parse_response(gpt_response: str) -> Dict[str, Any]:
-    """Parse GPT response to extract structured information"""
-    lines = gpt_response.split("\n")
+async def save_message_to_icp(conversation_id: str, message_data: dict):
+    """Save individual message to ICP canister"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                "conversation_id": conversation_id,
+                "message": message_data,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            async with session.post(
+                f"{ICP_CANISTER_URL}/api/messages",
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                if response.status == 200:
+                    logger.info(f"💾 Message saved to ICP for conversation {conversation_id}")
+                    return True
+                else:
+                    logger.error(f"❌ Failed to save message to ICP: {response.status}")
+                    return False
+    except Exception as e:
+        logger.error(f"❌ Error saving message to ICP: {e}")
+        return False
 
-    result = {
-        "message_to_buyer": "",
-        "message_to_seller": "",
-        "deal_status": "ongoing",
-        "counter_offer": 0.0,
-        "accepted": False,
-    }
+async def get_conversation_history_from_icp(conversation_id: str) -> list:
+    """Get conversation history from ICP canister"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{ICP_CANISTER_URL}/api/conversations/{conversation_id}/history",
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data.get("messages", [])
+                else:
+                    logger.warning(f"⚠️ Could not load history from ICP: {response.status}")
+                    return []
+    except Exception as e:
+        logger.error(f"❌ Error loading history from ICP: {e}")
+        return []
 
-    current_section = None
-    for line in lines:
-        line = line.strip()
+# Message models for structured communication
+class ItemSetup(Model):
+    item_name: str
+    listing_price: float
+    target_price: float
+    minimum_price: float
+    condition: str
+    known_flaws: str
+    key_selling_points: str
+    reason_for_selling: str
+    pickup_delivery_info: str
+    seller_address: str
 
-        if line == "[message_to_buyer]":
-            current_section = "message_to_buyer"
-        elif line == "[message_to_seller]":
-            current_section = "message_to_seller"
-        elif line.startswith("[") and line.endswith("]"):
-            current_section = None
-        elif line and current_section:
-            if current_section in ["message_to_buyer", "message_to_seller"]:
-                result[current_section] += line + " "
+class NegotiationReport(Model):
+    conversation_id: str
+    buyer_address: str
+    current_offer: Optional[float]
+    action_type: str  # INFO or ACTION_REQUIRED
+    message: str
 
-    # Clean up messages
-    result["message_to_buyer"] = result["message_to_buyer"].strip()
-    result["message_to_seller"] = result["message_to_seller"].strip()
-
-    # Analyze response for deal status
-    response_lower = gpt_response.lower()
-
-    # Check for deal acceptance
-    if any(
-        phrase in response_lower
-        for phrase in [
-            "deal",
-            "sold",
-            "agreed",
-            "accept",
-            "yours",
-            "setuju",
-            "sepakat",
-            "jadi",
-            "oke deal",
-        ]
-    ):
-        result["deal_status"] = "deal_made"
-        result["accepted"] = True
-        price_match = re.search(
-            r"(?:Rp\.?\s*)?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)", gpt_response
-        )
-        if price_match:
-            # Clean and convert price
-            price_str = price_match.group(1).replace(",", "").replace(".", "")
-            try:
-                result["counter_offer"] = float(price_str)
-            except ValueError:
-                result["counter_offer"] = 0.0
-
-    # Check for counter offers
-    elif any(
-        phrase in response_lower
-        for phrase in [
-            "counter",
-            "how about",
-            "consider",
-            "meet",
-            "gimana kalau",
-            "bagaimana",
-            "bisa",
-        ]
-    ):
-        result["deal_status"] = "counter_offer"
-        price_match = re.search(
-            r"(?:Rp\.?\s*)?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)", gpt_response
-        )
-        if price_match:
-            price_str = price_match.group(1).replace(",", "").replace(".", "")
-            try:
-                result["counter_offer"] = float(price_str)
-            except ValueError:
-                result["counter_offer"] = 0.0
-
-    # Check for rejection
-    elif any(
-        phrase in response_lower
-        for phrase in [
-            "too low",
-            "cannot",
-            "below",
-            "sorry",
-            "terlalu rendah",
-            "tidak bisa",
-            "maaf",
-        ]
-    ):
-        result["deal_status"] = "rejected"
-
-    # Check if seller action required
-    elif any(
-        phrase in response_lower for phrase in ["action required", "perlu tindakan"]
-    ):
-        result["deal_status"] = "needs_info"
-
-    return result
-
-
-def extract_offer_amount(message: str) -> Optional[float]:
-    """Extract monetary offer from message (supports Rupiah format)"""
-    patterns = [
-        r"(?:Rp\.?\s*)?(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)",  # Rp1.000.000 or 1,000,000
-        r"(\d+(?:[.,]\d{3})*)\s*(?:ribu|rb)",  # 500 ribu
-        r"(\d+(?:[.,]\d{3})*)\s*(?:juta|jt)",  # 5 juta
-        r"offer\s+(\d+(?:[.,]\d{3})*)",  # offer 1000000
-        r"tawar\s+(\d+(?:[.,]\d{3})*)",  # tawar 1000000
-    ]
-
-    for i, pattern in enumerate(patterns):
-        match = re.search(pattern, message.lower())
-        if match:
-            price_str = match.group(1).replace(",", "").replace(".", "")
-            try:
-                price = float(price_str)
-                # Convert ribu/juta to full amount
-                if i == 1:  # ribu pattern
-                    price *= 1000
-                elif i == 2:  # juta pattern
-                    price *= 1000000
-                return price
-            except ValueError:
-                continue
-    return None
-
-
-def format_rupiah(amount: float) -> str:
-    """Format amount to Indonesian Rupiah"""
-    if amount == 0:
-        return "Rp0"
-
-    # Convert to integer for formatting
-    amount_int = int(amount)
-
-    # Format with thousands separator
-    formatted = f"{amount_int:,}".replace(",", ".")
-    return f"Rp{formatted}"
-
-
-def get_conversation_key(buyer_id: str, title: str) -> str:
-    """Generate unique conversation key"""
-    return f"{buyer_id}_{title.lower().replace(' ', '_')[:20]}"
-
-
-def add_to_conversation(conversation_key: str, message: str, sender: str):
-    """Add message to conversation history"""
-    if conversation_key not in conversations:
-        conversations[conversation_key] = []
-
-    timestamp = datetime.now().strftime("%H:%M")
-    conversations[conversation_key].append(f"[{timestamp}] {sender}: {message}")
-
-
-def get_conversation_history(conversation_key: str) -> str:
-    """Get recent conversation history"""
-    if conversation_key in conversations:
-        return "\n".join(conversations[conversation_key][-6:])
-    return ""
-
-
-def detect_language(message: str) -> str:
-    """Detect if message is in Indonesian or English"""
-    indonesian_words = [
-        "apa",
-        "yang",
-        "ini",
-        "itu",
-        "saya",
-        "kamu",
-        "dengan",
-        "untuk",
-        "dari",
-        "ke",
-        "di",
-        "pada",
-        "adalah",
-        "akan",
-        "sudah",
-        "belum",
-        "bisa",
-        "tidak",
-        "ya",
-        "tidak",
-        "berapa",
-        "harga",
-        "jual",
-        "beli",
-        "tawar",
-        "nego",
-        "cod",
-        "transfer",
-        "kirim",
-    ]
-
-    message_lower = message.lower()
-    indonesian_count = sum(1 for word in indonesian_words if word in message_lower)
-
-    return "indonesian" if indonesian_count >= 2 else "english"
-
-
-@negotiator_agent.on_rest_post("/negotiate", NegotiationRequest, NegotiationResponse)
-async def negotiate(ctx: Context, req: NegotiationRequest) -> NegotiationResponse:
-    """Handle marketplace negotiations for any item"""
-
-    # Generate conversation key
-    conversation_key = get_conversation_key(req.buyer_id, req.title)
-
-    # Update stats
-    stats["total_negotiations"] += 1
-
-    # Add buyer message to conversation
-    add_to_conversation(conversation_key, req.message, "Buyer")
-
-    # Check for offer in message
-    offer_amount = extract_offer_amount(req.message)
-
-    # Get conversation context
-    conversation_history = get_conversation_history(conversation_key)
-
-    # Detect message language
-    language = detect_language(req.message)
-
-    # Calculate target price (75% between min and max)
-    target_price = req.minimum_price + (req.maximum_price - req.minimum_price) * 0.75
-
-    # Create negotiation prompt
-    prompt = f"""
-You are negotiating the sale of: {req.title}
+# Marketplace negotiation prompt template
+NEGOTIATION_PROMPT = """
+You are Marketplace Pro, an expert AI sales assistant managing Facebook Marketplace negotiations.
 
 ITEM DETAILS:
-- Title: {req.title}
-- Description: {req.description}
-- Maximum Price: {format_rupiah(req.maximum_price)}
-- Target Price: {format_rupiah(target_price)} (aim for this)
-- Minimum Price: {format_rupiah(req.minimum_price)} (never go below this)
-- Condition: {req.condition}
-- Location: {req.location}
-- Delivery: {req.delivery_info}
+- Name: {item_name}
+- Listed: ${listing_price} | Target: ${target_price} | Minimum: ${minimum_price}
+- Condition: {condition}
+- Flaws: {known_flaws}
+- Selling Points: {key_selling_points}
+- Pickup Info: {pickup_delivery_info}
 
-CONVERSATION HISTORY:
-{conversation_history}
+RULES:
+1. NEVER go below ${minimum_price}
+2. Aim for ${target_price}
+3. Be friendly but professional
+4. If unsure of details, say you'll check with the seller
+5. Use language based on buyer language
 
-BUYER MESSAGE: {req.message}
-LANGUAGE DETECTED: {language}
+BUYER MESSAGE: "{buyer_message}"
 
-NEGOTIATION RULES:
-1. Target price: {format_rupiah(target_price)} - try to get this or close to it
-2. Minimum price: {format_rupiah(req.minimum_price)} - never go below this
-3. Maximum price: {format_rupiah(req.maximum_price)} - starting point
-4. If offer >= target: accept enthusiastically
-5. If offer between minimum and target: negotiate upward
-6. If offer < minimum: politely decline and counter
-7. Respond in the same language as the buyer ({language})
-8. Use Indonesian Rupiah format (Rp1.000.000) for all prices
-9. Be friendly and professional
-10. If buyer asks general questions, provide helpful information about the item
+CONVERSATION HISTORY: {conversation_history}
 
-RESPONSE FORMAT:
-[message_to_buyer]
-Your response to the buyer in {language}
-
-[message_to_seller]
-Your report to the seller in English (start with [INFO] or [ACTION REQUIRED])
+Respond naturally in under 100 words as Marketplace Pro would.
 """
 
-    # Get AI response
-    gpt_response = generate_response_with_gpt(prompt)
-    ctx.logger.info(f"GPT Response: {gpt_response}")
+class MarketplaceNegotiator:
+    """Enhanced marketplace negotiation with chat protocol"""
+    
+    @staticmethod
+    def extract_price_from_message(message: str) -> Optional[float]:
+        """Extract price from buyer message"""
+        price_patterns = [
+            r"\$(\d+(?:\.\d{1,2})?)",
+            r"(\d+(?:\.\d{1,2})?) dollars?",
+            r"offer (\d+(?:\.\d{1,2})?)",
+            r"pay (\d+(?:\.\d{1,2})?)",
+            r"(\d+(?:\.\d{1,2})?) bucks"
+        ]
+        
+        for pattern in price_patterns:
+            match = re.search(pattern, message.lower())
+            if match:
+                try:
+                    return float(match.group(1))
+                except (ValueError, IndexError):
+                    continue
+        return None
+    
+    @staticmethod
+    def requires_seller_info(message: str) -> bool:
+        """Check if buyer message requires information from seller"""
+        info_keywords = [
+            "what year", "when was", "how old", "age", "brand", "model",
+            "dimensions", "size", "weight", "color", "material", "made",
+            "manufactured", "where", "how long", "original", "receipt",
+            "warranty", "history", "previous owner", "condition details"
+        ]
+        message_lower = message.lower()
+        return any(keyword in message_lower for keyword in info_keywords)
+    
+    @staticmethod
+    def get_intelligent_response(buyer_message: str, buyer_address: str) -> Dict[str, str]:
+        """Generate intelligent response using GPT or fallback logic"""
+        global item_details, conversation_history
+        
+        if not item_details:
+            return {
+                "to_buyer": "Sorry, no item is currently listed for sale. Please check back later!",
+                "to_seller": "[ERROR] No item details configured.",
+                "action_type": "ERROR"
+            }
+        
+        # Get conversation history
+        history = conversation_history.get(buyer_address, [])
+        history_text = "\n".join([f"- {msg['sender']}: {msg['message']}" for msg in history[-5:]])
+        
+        try:
+            # Generate GPT response using OpenRouter
+            prompt = NEGOTIATION_PROMPT.format(
+                item_name=item_details.get('item_name', 'Unknown Item'),
+                listing_price=item_details.get('listing_price', 0),
+                target_price=item_details.get('target_price', 0),
+                minimum_price=item_details.get('minimum_price', 0),
+                condition=item_details.get('condition', 'Good condition'),
+                known_flaws=item_details.get('known_flaws', 'None mentioned'),
+                key_selling_points=item_details.get('key_selling_points', ''),
+                pickup_delivery_info=item_details.get('pickup_delivery_info', ''),
+                buyer_message=buyer_message,
+                conversation_history=history_text
+            )
+            
+            response = client.chat.completions.create(
+                model="openai/gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=150,
+                temperature=0.7
+            )
+            agent_response = response.choices[0].message.content.strip()
+            
+            # Generate seller report
+            price_offer = MarketplaceNegotiator.extract_price_from_message(buyer_message)
+            seller_report = f"[INFO] Buyer: '{buyer_message}' | My response: '{agent_response}'"
+            if price_offer:
+                seller_report += f" | Offer: ${price_offer}"
+            
+            action_type = "ACTION_REQUIRED" if MarketplaceNegotiator.requires_seller_info(buyer_message) else "INFO"
+            
+            return {
+                "to_buyer": agent_response,
+                "to_seller": seller_report,
+                "action_type": action_type
+            }
+                
+        except Exception as e:
+            logger.error(f"Error with OpenRouter GPT response: {e}")
+            # Fallback to rule-based logic if OpenRouter fails
+            return MarketplaceNegotiator.get_fallback_response(buyer_message)
+    
+    @staticmethod
+    async def get_fallback_response_with_icp(buyer_message: str, buyer_address: str) -> Dict[str, str]:
+        """Fallback response with ICP integration"""
+        global item_details
+        
+        message_lower = buyer_message.lower().strip()
+        conversation_id = f"conv_{buyer_address}"
+        
+        # Save buyer message to ICP
+        buyer_message_data = {
+            "sender": "buyer",
+            "sender_address": buyer_address,
+            "message": buyer_message,
+            "timestamp": datetime.now().isoformat(),
+            "message_type": "incoming"
+        }
+        await save_message_to_icp(conversation_id, buyer_message_data)
+        
+        # Generate response based on rules
+        if "available" in message_lower:
+            response = f"Hi! Yes, the {item_details.get('item_name', 'item')} is still available. What would you like to know about it?"
+            seller_report = "[INFO] New buyer inquiry - confirmed availability."
+            action_type = "INFO"
+        else:
+            # Price negotiation
+            price_offer = MarketplaceNegotiator.extract_price_from_message(buyer_message)
+            if price_offer:
+                min_price = item_details.get('minimum_price', 0)
+                target_price = item_details.get('target_price', 0)
+                
+                # Save offer to ICP
+                offer_data = {
+                    "conversation_id": conversation_id,
+                    "buyer_address": buyer_address,
+                    "offer_amount": price_offer,
+                    "timestamp": datetime.now().isoformat(),
+                    "status": "pending"
+                }
+                await save_message_to_icp(f"{conversation_id}_offers", offer_data)
+                
+                if price_offer < min_price:
+                    response = f"Thanks for the offer! The lowest I can go is ${min_price}. This item is in {item_details.get('condition', 'great condition')}."
+                    seller_report = f"[INFO] Received offer of ${price_offer}, countered with minimum ${min_price}."
+                    action_type = "INFO"
+                elif price_offer >= target_price:
+                    response = f"Perfect! ${price_offer} works for me. {item_details.get('pickup_delivery_info', 'When would you like to pick it up?')}"
+                    seller_report = f"[ACTION_REQUIRED] Deal agreed at ${price_offer}! Please confirm pickup arrangements."
+                    action_type = "ACTION_REQUIRED"
+                else:
+                    counter = min(target_price, price_offer * 1.15)
+                    response = f"I appreciate the offer! Could you do ${counter:.0f}? {item_details.get('key_selling_points', 'It\'s really worth it.')}"
+                    seller_report = f"[INFO] Received ${price_offer}, countered with ${counter:.0f}."
+                    action_type = "INFO"
+            elif MarketplaceNegotiator.requires_seller_info(buyer_message):
+                response = "That's a great question! Let me check on that for you and get right back to you."
+                seller_report = f"[ACTION_REQUIRED] Buyer asking: '{buyer_message}'. Please provide this information."
+                action_type = "ACTION_REQUIRED"
+            else:
+                response = f"Thanks for your interest in the {item_details.get('item_name', 'item')}! It's in {item_details.get('condition', 'good condition')}. Any specific questions?"
+                seller_report = f"[INFO] General inquiry: '{buyer_message}'. Provided basic information."
+                action_type = "INFO"
+        
+        # Save agent response to ICP
+        agent_message_data = {
+            "sender": "agent",
+            "sender_address": "marketplace_agent",
+            "message": response,
+            "timestamp": datetime.now().isoformat(),
+            "message_type": "response"
+        }
+        await save_message_to_icp(conversation_id, agent_message_data)
+        
+        return {
+            "to_buyer": response,
+            "to_seller": seller_report,
+            "action_type": action_type
+        }
 
-    # Parse response
-    parsed = parse_response(gpt_response)
-
-    # Add seller response to conversation
-    if parsed["message_to_buyer"]:
-        add_to_conversation(conversation_key, parsed["message_to_buyer"], "Seller")
-
-    # Update deal statistics
-    if parsed["deal_status"] == "deal_made":
-        stats["deals_made"] += 1
-
-    # Log activity
-    ctx.logger.info(f"Negotiation: {req.buyer_id} for {req.title}")
-    ctx.logger.info(f"Status: {parsed['deal_status']}")
-    if offer_amount:
-        ctx.logger.info(f"Offer detected: {format_rupiah(offer_amount)}")
-    if parsed["counter_offer"] > 0:
-        ctx.logger.info(f"Counter offer: {format_rupiah(parsed['counter_offer'])}")
-
-    return NegotiationResponse(
-        message_to_buyer=parsed["message_to_buyer"],
-        message_to_seller=parsed["message_to_seller"],
-        deal_status=parsed["deal_status"],
-        counter_offer=parsed["counter_offer"],
-        accepted=parsed["accepted"],
-        timestamp=int(time.time()),
+def create_text_chat(text: str, end_session: bool = False) -> ChatMessage:
+    """Create a chat message with text content"""
+    content = [TextContent(type="text", text=text)]
+    if end_session:
+        content.append(EndSessionContent())
+    
+    return ChatMessage(
+        timestamp=datetime.now(timezone.utc),
+        msg_id=uuid4(),
+        content=content
     )
 
-
-@negotiator_agent.on_event("startup")
+# Agent startup event
+@agent.on_event("startup")
 async def startup_handler(ctx: Context):
-    ctx.logger.info("Marketplace Negotiator Agent started")
-    ctx.logger.info(f"Agent address: {ctx.agent.address}")
-    ctx.logger.info("Available endpoint: POST /negotiate")
-    ctx.logger.info("Supporting Indonesian Rupiah and bilingual conversations")
+    """Agent startup handler"""
+    ctx.logger.info(f"🤖 Marketplace Negotiator Agent starting up...")
+    ctx.logger.info(f"📍 Agent address: {agent.address}")
+    ctx.logger.info(f"🔌 Port: {AGENT_PORT}")
+    ctx.logger.info(f"🧠 OpenRouter enabled: {bool(OPENROUTER_API_KEY)}")
+    ctx.logger.info("✅ Marketplace Negotiator ready for chat protocol communication!")
 
+# Chat message handler
+@chat_proto.on_message(ChatMessage)
+async def handle_chat_message(ctx: Context, sender: str, msg: ChatMessage):
+    """Handle incoming chat messages from buyers and sellers with ICP backend integration"""
+    global seller_address
+    
+    ctx.logger.info(f"💬 Received chat message from {sender}")
+    
+    # Extract text content from message
+    message_text = ""
+    for content in msg.content:
+        if isinstance(content, TextContent):
+            message_text = content.text
+            break
+    
+    if not message_text:
+        ctx.logger.warning("⚠️ No text content found in message")
+        return
+    
+    ctx.logger.info(f"📝 Message content: {message_text}")
+    
+    conversation_id = f"conv_{sender}"
+    
+    # Load conversation from ICP to check if seller is responding
+    conversation_data = await load_conversation_from_icp(conversation_id)
+    awaiting_seller = conversation_data and conversation_data.get("awaiting_seller_response", False)
+    
+    # Check if this is a seller providing information
+    if sender == seller_address and awaiting_seller:
+        # Handle seller response to pending question
+        buyer_waiting = conversation_data.get("buyer_waiting_for_info")
+        if buyer_waiting:
+            response_text = f"I've confirmed that for you - {message_text}. Hope that helps!"
+            
+            # Send response to buyer
+            response_msg = create_text_chat(response_text)
+            await ctx.send(buyer_waiting, response_msg)
+            
+            # Confirm to seller
+            seller_confirmation = create_text_chat("[INFO] I have relayed the information to the buyer.")
+            await ctx.send(sender, seller_confirmation)
+            
+            # Update conversation state in ICP
+            updated_conversation = {
+                **conversation_data,
+                "awaiting_seller_response": False,
+                "buyer_waiting_for_info": None
+            }
+            await save_conversation_to_icp(conversation_id, updated_conversation)
+            
+            # Save seller response to ICP
+            seller_message_data = {
+                "sender": "seller",
+                "sender_address": sender,
+                "message": message_text,
+                "timestamp": datetime.now().isoformat(),
+                "message_type": "seller_response"
+            }
+            await save_message_to_icp(conversation_id, seller_message_data)
+            
+            ctx.logger.info(f"✅ Seller info relayed from {sender} to {buyer_waiting}")
+        
+    else:
+        # Handle buyer message with negotiation logic
+        responses = await MarketplaceNegotiator.get_intelligent_response(message_text, sender)
+        
+        # Send response to buyer
+        if responses["to_buyer"]:
+            buyer_response = create_text_chat(responses["to_buyer"])
+            await ctx.send(sender, buyer_response)
+            
+            ctx.logger.info(f"💬 Sent response to buyer {sender}")
+        
+        # Send report to seller and update ICP state
+        if responses["to_seller"] and seller_address:
+            seller_report = create_text_chat(responses["to_seller"])
+            await ctx.send(seller_address, seller_report)
+            
+            # Update conversation state in ICP if action required
+            if responses["action_type"] == "ACTION_REQUIRED":
+                conversation_data = await load_conversation_from_icp(conversation_id) or {}
+                updated_conversation = {
+                    **conversation_data,
+                    "awaiting_seller_response": True,
+                    "buyer_waiting_for_info": sender,
+                    "pending_question": message_text
+                }
+                await save_conversation_to_icp(conversation_id, updated_conversation)
+                ctx.logger.info(f"⏳ Awaiting seller response for {sender}")
+            
+            ctx.logger.info(f"📊 Sent report to seller {seller_address}")
+    
+    # Send acknowledgment
+    ack = ChatAcknowledgement(
+        timestamp=datetime.now(timezone.utc),
+        acknowledged_msg_id=msg.msg_id
+    )
+    await ctx.send(sender, ack)
+
+# Chat acknowledgment handler
+@chat_proto.on_message(ChatAcknowledgement)
+async def handle_chat_acknowledgement(ctx: Context, sender: str, msg: ChatAcknowledgement):
+    """Handle chat acknowledgments"""
+    ctx.logger.info(f"✅ Received acknowledgment from {sender} for message {msg.acknowledged_msg_id}")
+
+# Item setup message handler
+@agent.on_message(ItemSetup)
+async def handle_item_setup(ctx: Context, sender: str, msg: ItemSetup):
+    """Handle item setup from seller with ICP storage"""
+    global item_details, seller_address
+    
+    item_details = {
+        'item_name': msg.item_name,
+        'listing_price': msg.listing_price,
+        'target_price': msg.target_price,
+        'minimum_price': msg.minimum_price,
+        'condition': msg.condition,
+        'known_flaws': msg.known_flaws,
+        'key_selling_points': msg.key_selling_points,
+        'reason_for_selling': msg.reason_for_selling,
+        'pickup_delivery_info': msg.pickup_delivery_info,
+    }
+    
+    seller_address = msg.seller_address
+    
+    # Save item details to ICP
+    item_data = {
+        "item_details": item_details,
+        "seller_address": seller_address,
+        "setup_timestamp": datetime.now().isoformat(),
+        "status": "active"
+    }
+    await save_conversation_to_icp("item_config", item_data)
+    
+    ctx.logger.info(f"🏷️ Item configured: {msg.item_name} (${msg.listing_price})")
+    
+    # Send confirmation to seller
+    confirmation = create_text_chat(
+        f"✅ Item setup complete: {msg.item_name} - Listed at ${msg.listing_price}, Target: ${msg.target_price}, Minimum: ${msg.minimum_price}"
+    )
+    await ctx.send(sender, confirmation)
+    
+    seller_address = msg.seller_address
+    
+    ctx.logger.info(f"🏷️ Item configured: {msg.item_name} (${msg.listing_price})")
+    
+    # Send confirmation to seller
+    confirmation = create_text_chat(
+        f"✅ Item setup complete: {msg.item_name} - Listed at ${msg.listing_price}, Target: ${msg.target_price}, Minimum: ${msg.minimum_price}"
+    )
+    await ctx.send(sender, confirmation)
+
+# Include chat protocol in agent
+agent.include(chat_proto)
+
+# Health check interval
+@agent.on_interval(period=300.0)  # Every 5 minutes
+async def health_check(ctx: Context):
+    """Periodic health check"""
+    ctx.logger.info(f"💓 Health check - Item configured: {bool(item_details)}, Active conversations: {len(conversation_history)}")
 
 if __name__ == "__main__":
-    print("Starting Marketplace Negotiator Agent...")
-    print("Available endpoint: POST http://localhost:8000/negotiate")
-    print("Supporting Indonesian Rupiah and Indonesian/English languages")
-    negotiator_agent.run()
+    logger.info("🚀 Starting Facebook Marketplace Negotiator with Chat Protocol...")
+    logger.info(f"🔧 Agent configuration:")
+    logger.info(f"   - Seed: {AGENT_SEED}")
+    logger.info(f"   - Port: {AGENT_PORT}")
+    logger.info(f"   - OpenRouter: {'✅ Enabled' if OPENROUTER_API_KEY else '❌ Disabled (using fallback)'}")
+    logger.info(f"   - Mailbox: ✅ Enabled")
+    logger.info(f"   - Chat Protocol: ✅ Enabled")
+    
+    print("\n" + "="*60)
+    print("🏪 FACEBOOK MARKETPLACE NEGOTIATOR AGENT")
+    print("="*60)
+    print(f"📍 Agent Address: {agent.address}")
+    print(f"💬 Chat Protocol: Enabled")
+    print(f"🧠 AI Response: {'OpenRouter GPT' if OPENROUTER_API_KEY else 'Rule-based'}")
+    print("="*60)
+    print("Ready to negotiate! Send me:")
+    print("1. ItemSetup message to configure item for sale")
+    print("2. ChatMessage for buyer communications")
+    print("="*60 + "\n")
+    
+    agent.run()
