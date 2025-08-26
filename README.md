@@ -1,6 +1,5 @@
 ![tag:innovationlab](https://img.shields.io/badge/innovationlab-3D8BD3)
 
-
 # 🤖 Adol AI Sales Negotiation Agent
 
 > **Autonomous AI Agent for Marketplace Sales Negotiations**  
@@ -8,7 +7,7 @@
 
 ## 📋 Overview
 
-The Adol AI Sales Negotiation Agent is an intelligent autonomous agent that handles end-to-end sales negotiations on behalf of sellers across multiple marketplace platforms. Built on the Fetch.ai framework and deployed on Agentverse, this agent provides professional-level negotiation capabilities with 24/7 availability.
+The Adol AI Sales Negotiation Agent is an intelligent autonomous agent that handles end-to-end sales negotiations on behalf of sellers across multiple marketplace platforms. Built on the Fetch.ai framework and deployable both locally and on Agentverse, this agent provides professional-level negotiation capabilities with 24/7 availability.
 
 ### 🎯 Key Features
 
@@ -24,101 +23,332 @@ The Adol AI Sales Negotiation Agent is an intelligent autonomous agent that hand
 ### Technology Stack
 
 - **Framework**: [Fetch.ai uAgents](https://fetch.ai/)
-- **Deployment**: [Agentverse Platform](https://agentverse.ai/)
+- **Deployment**: Local development + [Agentverse Platform](https://agentverse.ai/)
 - **AI Engine**: OpenAI GPT integration
 - **Communication**: uAgents Chat Protocol
-- **Backend**: Internet Computer (ICP) Canister
+- **Backend**: Internet Computer (ICP) Canister / Mock API
 - **Languages**: Python 3.9+
+
+## 🚀 Local Development Setup
+
+### Prerequisites
+
+- Python 3.9 or higher
+- pip package manager
+- Git
+- OpenAI API key (or OpenRouter API key)
+
+### Installation
+
+1. **Clone the Repository**
+```bash
+git clone https://github.com/hunters-code/adol-agents.git
+cd adol-agents
+```
+
+2. **Create Virtual Environment**
+```bash
+python -m venv venv
+
+# On Windows
+venv\Scripts\activate
+
+# On macOS/Linux
+source venv/bin/activate
+```
+
+3. **Install Dependencies**
+```bash
+pip install -r requirements.txt
+```
+
+4. **Environment Configuration**
+
+Copy the example environment file and configure it:
+```bash
+cp .env.example .env
+```
+
+Edit `.env` file with your configuration:
+```bash
+# OpenAI Configuration (required)
+OPENAI_API_KEY=your_openai_or_openrouter_api_key_here
+OPENAI_BASE_URL=https://openrouter.ai/api/v1
+OPENAI_MODEL=gpt-3.5-turbo
+OPENAI_VISION_MODEL=gpt-4-vision-preview
+OPENAI_MAX_TOKENS=500
+OPENAI_TEMPERATURE=0.7
+
+# API Backend (for product data)
+API_BASE_URL=https://dummyjson.com/c/a2d5-5008-4347-9d22
+```
+
+### Project Structure
+
+```
+adol-agents/
+├── agents/
+│   ├── __init__.py           # Empty init file
+│   ├── image_analyzer.py     # Empty (placeholder)
+│   ├── product_listing.py    # Product listing agent with image analysis
+│   └── negotiator.py         # Sales negotiation agent
+├── app.py                    # Flask web server (basic setup)
+├── requirements.txt          # Python dependencies
+├── .env.example             # Environment configuration template
+├── .gitignore              # Git ignore rules
+└── README.md               # This file
+```
 
 ## 🎮 How to Use
 
-### 1. Agent Initialization
+### 1. Running the Product Listing Agent
 
-The agent automatically starts with these capabilities:
-- ✅ Chat protocol integration
-- ✅ OpenAI GPT connection
-- ✅ Product API integration
-- ✅ Multi-language detection
-- ✅ Negotiation logic
+The product listing agent handles image analysis and product listing creation:
 
-### 2. Starting a Negotiation
-
-**Format for buyers:**
-```
-[Product ID]
-[Your message as buyer]
-
-Example:
-PROD123456
-Hi, is this still available? I'm interested in buying it for Rp 900,000.
+```bash
+# Run the product listing agent
+python agents/product_listing.py
 ```
 
-### 3. Agent Responses
+**Features:**
+- ✅ Image analysis with AI
+- ✅ Product listing generation
+- ✅ Price estimation and strategy
+- ✅ Context-aware conversations
+- ✅ Product memory management
 
-The agent provides dual responses:
-- **To Buyer**: Professional negotiation response
-- **To Seller**: Status updates and action requirements
+### 2. Running the Sales Negotiation Agent
 
-## 💬 Conversation Examples
+The negotiation agent handles buyer interactions and price negotiations:
 
-### Successful Negotiation Flow
-
-```
-Buyer: "PROD123456 Hi, is this available? Will you take Rp 800,000?"
-
-Agent Response:
-[message_to_buyer]
-Hi! Yes, the Bose QC35 II headphones are still available and in excellent 
-condition. Your offer of Rp 800,000 is below our asking price of Rp 1,400,000. 
-Considering the premium quality and excellent battery life, I can offer 
-Rp 1,250,000. This is a great deal for these high-end headphones!
-
-[message_to_seller]
-[INFO] Buyer interested in PROD123456. Offered Rp 800,000, countered with 
-Rp 1,250,000. Waiting for response.
+```bash
+# Run the negotiation agent
+python agents/negotiator.py
 ```
 
-### Information Query Handling
+**Features:**
+- ✅ Buyer message handling
+- ✅ Price negotiation logic
+- ✅ Product information retrieval
+- ✅ Multi-language support (English/Indonesian)
+- ✅ Conversation history management
 
+### 3. Running the Flask Web Server (Optional)
+
+Basic web server setup for API endpoints:
+
+```bash
+# Run the web server
+python app.py
 ```
-Buyer: "PROD123456 Are there any scratches on the charging port?"
 
-Agent Response:
-[message_to_buyer]
-Let me check the specific condition details for you. I'll get back to you 
-shortly with accurate information about the charging port condition.
+## 💬 Agent Usage Examples
 
-[message_to_seller]
-[ACTION REQUIRED] Buyer asking about charging port scratches on PROD123456. 
-Please provide condition details.
+### Product Listing Agent
+
+**Upload a product image and get a complete listing:**
+
+1. Start the agent: `python agents/product_listing.py`
+2. Connect via Agentverse or uAgents protocol
+3. Upload an image of your product
+4. The AI will analyze and create a complete product listing
+5. Review and approve the listing
+6. Say "buat listing" (create listing) to finalize
+
+**Example conversation:**
+```
+User: [uploads photo of motorcycle]
+Agent: ✅ Analisis selesai!
+
+🛍️ **Honda Beat 2019**
+📂 motor | ⭐ Good
+
+💰 **Strategi Harga:**
+• **Listing:** Rp18.500.000
+• **Target:** Rp15.725.000 ⭐  
+• **Minimum:** Rp12.950.000 ❌
+
+User: kondisi agak lecet di spakbor belakang
+Agent: [updates known_flaws and shows updated preview]
+
+User: buat listing
+Agent: 🎉 **Listing berhasil dibuat!** ID Produk: MTR_1234
+```
+
+### Sales Negotiation Agent
+
+**Handle buyer negotiations automatically:**
+
+1. Start the agent: `python agents/negotiator.py`
+2. Buyers send: `product_1 Hi, is this still available?`
+3. Agent handles all negotiations within your price limits
+
+**Example negotiation:**
+```
+Buyer: product_1 Hi, interested in this item. Will you take Rp 800,000?
+Agent: Hi! Yes, the item is still available. Your offer of Rp 800,000 is below 
+our asking price of Rp 1,400,000. Considering the excellent condition, I can 
+offer Rp 1,250,000. This is a great deal!
+
+Buyer: How about Rp 1,000,000?
+Agent: I understand you're looking for a good deal. The lowest I can go is 
+Rp 1,200,000. This is already a significant discount from the original price.
 ```
 
 ## ⚙️ Configuration
 
 ### Pricing Strategy
 
-The agent automatically calculates:
-- **Listing Price**: Original seller price (100%)
+Both agents use automatic pricing calculations:
+- **Listing Price**: AI-estimated market price (100%)
 - **Target Price**: Preferred sale price (85% of listing)
 - **Minimum Price**: Absolute minimum (70% of listing)
 
-### Negotiation Tactics
+### AI Models Configuration
 
-1. **Price Anchoring**: Always reference the listing price
-2. **Value Emphasis**: Highlight product benefits and condition
-3. **Urgency Creation**: Mention item popularity when appropriate
-4. **Polite Decline**: Professional rejection of lowball offers
-5. **Strategic Concessions**: Gradual price reductions within limits
+```bash
+# Use OpenAI directly
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_MODEL=gpt-3.5-turbo
+OPENAI_VISION_MODEL=gpt-4-vision-preview
 
-### Language Detection
+# Use OpenRouter (recommended for cost)
+OPENAI_BASE_URL=https://openrouter.ai/api/v1
+OPENAI_MODEL=gpt-3.5-turbo
+OPENAI_VISION_MODEL=gpt-4-vision-preview
+```
 
-The agent automatically detects and responds in:
+### Language Support
+
+The negotiation agent automatically detects and responds in:
 - **English**: For international buyers
 - **Bahasa Indonesia**: For local Indonesian market
 
-## 📊 Agent Capabilities
+## 🔧 Development & Testing
 
-### Core Functions
+### Running Individual Agents
+
+```bash
+# Test product listing agent
+python agents/product_listing.py
+
+# Test negotiation agent  
+python agents/negotiator.py
+
+# Run web server (optional)
+python app.py
+```
+
+### Environment Variables
+
+```bash
+# Required
+OPENAI_API_KEY=your_api_key_here
+
+# Optional (with defaults)
+OPENAI_BASE_URL=https://openrouter.ai/api/v1
+OPENAI_MODEL=gpt-3.5-turbo
+OPENAI_VISION_MODEL=gpt-4-vision-preview
+OPENAI_MAX_TOKENS=500
+OPENAI_TEMPERATURE=0.7
+API_BASE_URL=https://dummyjson.com/c/a2d5-5008-4347-9d22
+```
+
+### Debugging
+
+Enable debug logging by checking the console output when running the agents. Both agents include comprehensive logging for troubleshooting.
+
+## 🔗 API Integration
+
+### Product Data API
+
+The agents integrate with a backend API to fetch product information:
+
+```python
+# Default API endpoint (mock data for testing)
+API_BASE_URL = "https://dummyjson.com/c/a2d5-5008-4347-9d22"
+
+# Product endpoint
+GET /products/{product_id}
+
+# Example response
+{
+  "id": "product_1",
+  "name": "Bose QuietComfort 35 II",
+  "description": "Premium noise-canceling headphones...",
+  "price": 1400000,
+  "stock": 1,
+  "isActive": true,
+  "categoryId": "electronics"
+}
+```
+
+### Creating New Products
+
+The product listing agent can create new products via API:
+
+```python
+POST /products
+Content-Type: application/json
+
+{
+  "id": "MTR_1234",
+  "name": "Honda Beat 2019",
+  "description": "Well-maintained motorcycle...",
+  "price": 18500000,
+  "target_price": 15725000,
+  "minimum_price": 12950000,
+  "category": "motor",
+  "condition": "Good"
+}
+```
+
+## 📦 Deployment to Agentverse
+
+### Deploy Product Listing Agent
+
+1. **Test Locally First**
+```bash
+python agents/product_listing.py
+```
+
+2. **Upload to Agentverse**
+- Visit [Agentverse](https://agentverse.ai/)
+- Create new agent
+- Upload `agents/product_listing.py`
+- Configure environment variables
+- Deploy
+
+### Deploy Negotiation Agent
+
+1. **Test Locally**
+```bash
+python agents/negotiator.py
+```
+
+2. **Upload to Agentverse**
+- Create separate agent for negotiation
+- Upload `agents/negotiator.py`
+- Configure API endpoints
+- Deploy
+
+### Production Agents
+
+**Live Negotiation Agent**: https://agentverse.ai/agents/details/agent1qd2mu8zses2cxgd46wn9d79esn6u64juz00sg7w0qc5zsxa2v0fgs9c5a6w/profile
+
+## 🎯 Agent Capabilities
+
+### Product Listing Agent
+
+| Function | Description | Status |
+|----------|-------------|--------|
+| Image Analysis | AI-powered product recognition from photos | ✅ Active |
+| Listing Generation | Complete product listings with pricing strategy | ✅ Active |
+| Context Management | Remembers product details during conversation | ✅ Active |
+| Price Strategy | Automatic target/minimum price calculation | ✅ Active |
+| Natural Language | Processes user input and modifications | ✅ Active |
+
+### Sales Negotiation Agent
 
 | Function | Description | Status |
 |----------|-------------|--------|
@@ -126,188 +356,123 @@ The agent automatically detects and responds in:
 | Price Negotiation | Handles buyer offers within seller limits | ✅ Active |
 | Q&A Management | Answers product questions intelligently | ✅ Active |
 | Language Detection | Auto-detects and responds in appropriate language | ✅ Active |
-| Seller Communication | Forwards important updates to seller | ✅ Active |
-| Deal Closure | Finalizes agreements and logistics | ✅ Active |
+| Conversation History | Maintains context throughout negotiation | ✅ Active |
+| Deal Closure | Finalizes agreements within price limits | ✅ Active |
 
-### Advanced Features
+## 🧪 Testing
 
-- **Memory System**: Stores product-specific information learned during conversations
-- **Context Awareness**: Maintains conversation context throughout negotiation
-- **Error Handling**: Graceful handling of API failures and edge cases
-- **Audit Trail**: Comprehensive logging of all interactions
+### Manual Testing Scripts
 
-## 🔗 API Integration
-
-The AI agent integrates with the **Internet Computer (ICP) backend API** to fetch product data and send notifications to sellers. All API communications are secured through ICP's decentralized infrastructure.
-
-### Backend Configuration
-- **Platform**: Internet Computer Protocol (ICP)
-- **Canister ID**: `ujk5g-liaaa-aaaam-aeocq-cai`
-- **Network**: IC Mainnet
-- **Authentication**: ICP Identity-based
-
-### Product Details Endpoint
+Create test scripts to validate agent behavior:
 
 ```python
-GET /api/products/{product_id}
-Host: ujk5g-liaaa-aaaam-aeocq-cai.ic0.app
-Authorization: Bearer {icp_identity_token}
+# test_agents.py
+import asyncio
+from agents.negotiator import agent as negotiator_agent
+from agents.product_listing import agent as listing_agent
 
-Response:
-{
-  "id": "PROD123456",
-  "name": "Bose QuietComfort 35 II",
-  "description": "Premium noise-canceling headphones...",
-  "price": 1400000,
-  "stock": 1,
-  "isActive": true,
-  "categoryId": "electronics",
-  "imageUrl": "https://...",
-  "createdBy": "seller123",
-  "createdAt": 1234567890,
-  "updatedAt": 1234567890
-}
+async def test_negotiation():
+    # Test negotiation flow
+    test_message = "product_1 Hi, is this available? I can pay 1,200,000"
+    # Send to negotiation agent
+    print("Testing negotiation agent...")
+
+async def test_listing():
+    # Test listing creation
+    print("Testing product listing agent...")
+
+if __name__ == "__main__":
+    asyncio.run(test_negotiation())
 ```
 
-### Notification API Endpoints
+### Integration Testing
 
-The agent uses these ICP backend endpoints to communicate with sellers:
+Test the complete flow from listing creation to negotiation:
 
-#### Send Seller Notification
-```python
-POST /api/notifications/send
-Host: ujk5g-liaaa-aaaam-aeocq-cai.ic0.app
-Content-Type: application/json
-Authorization: Bearer {icp_identity_token}
+1. Create a product with the listing agent
+2. Use the product ID with the negotiation agent
+3. Test buyer interactions and price negotiations
 
-Request Body:
-{
-  "sellerId": "seller123",
-  "productId": "PROD123456",
-  "type": "negotiation_update",
-  "message": "New offer received: Rp 1,200,000",
-  "data": {
-    "buyerOffer": 1200000,
-    "agentResponse": "Countered with Rp 1,250,000",
-    "timestamp": "2024-08-26T10:30:00Z",
-    "requiresAction": false
-  }
-}
+## 🔍 Troubleshooting
 
-Response:
-{
-  "success": true,
-  "notificationId": "notif_abc123",
-  "deliveredAt": "2024-08-26T10:30:01Z"
-}
+### Common Issues
+
+1. **Missing OpenAI API Key**
+```bash
+Error: Missing environment variables: OPENAI_API_KEY
+Solution: Set OPENAI_API_KEY in your .env file
 ```
 
-#### Send Action Required Alert
-```python
-POST /api/notifications/action-required
-Host: ujk5g-liaaa-aaaam-aeocq-cai.ic0.app
-Content-Type: application/json
-Authorization: Bearer {icp_identity_token}
-
-Request Body:
-{
-  "sellerId": "seller123",
-  "productId": "PROD123456",
-  "type": "seller_input_needed",
-  "message": "Buyer asking about charging port condition",
-  "data": {
-    "buyerQuestion": "Are there any scratches on the charging port?",
-    "urgency": "medium",
-    "expectedResponse": "condition_details",
-    "timestamp": "2024-08-26T10:45:00Z"
-  }
-}
-
-Response:
-{
-  "success": true,
-  "actionId": "action_xyz789",
-  "notificationId": "notif_def456",
-  "deliveredAt": "2024-08-26T10:45:01Z"
-}
+2. **Product Not Found**
+```bash
+Error: Product ID not found in API
+Solution: Ensure the product exists or use test product IDs like "product_1"
 ```
 
-#### Send Deal Completion Alert
-```python
-POST /api/notifications/deal-closed
-Host: ujk5g-liaaa-aaaam-aeocq-cai.ic0.app
-Content-Type: application/json
-Authorization: Bearer {icp_identity_token}
-
-Request Body:
-{
-  "sellerId": "seller123",
-  "productId": "PROD123456",
-  "type": "sale_completed",
-  "message": "Item sold successfully for Rp 1,250,000",
-  "data": {
-    "finalPrice": 1250000,
-    "buyerDetails": {
-      "contactInfo": "buyer_contact_encrypted",
-      "pickupPreference": "seller_location"
-    },
-    "commission": {
-      "amount": 125000,
-      "percentage": 10
-    },
-    "timestamp": "2024-08-26T11:00:00Z"
-  }
-}
-
-Response:
-{
-  "success": true,
-  "saleId": "sale_completed_123",
-  "notificationId": "notif_ghi789",
-  "deliveredAt": "2024-08-26T11:00:01Z",
-  "nextSteps": [
-    "Prepare item for pickup",
-    "Wait for buyer contact",
-    "Commission will be deducted from credits"
-  ]
-}
+3. **Agent Connection Issues**
+```bash
+Error: Failed to connect to Agentverse
+Solution: Check internet connection and agent configuration
 ```
 
-### Chat Protocol Messages
+### Debug Mode
 
-```python
-# Incoming buyer message
-{
-  "type": "ChatMessage",
-  "content": [{"type": "text", "text": "PROD123456 Hi, interested!"}],
-  "timestamp": "2024-08-26T10:00:00Z",
-  "msg_id": "uuid-here"
-}
+Both agents include comprehensive logging. Check console output for detailed debugging information.
 
-# Agent response
-{
-  "type": "ChatMessage", 
-  "content": [{"type": "text", "text": "Hello! This item is available..."}],
-  "timestamp": "2024-08-26T10:00:01Z",
-  "msg_id": "uuid-here"
-}
+## 📊 Monitoring
+
+### Conversation Logging
+
+Both agents automatically log:
+- Message interactions
+- Price negotiations
+- Product inquiries
+- Error conditions
+- Performance metrics
+
+### Analytics
+
+Track agent performance:
+- Successful negotiations
+- Average negotiation time
+- Price acceptance rates
+- User satisfaction metrics
+
+## 🤝 Contributing
+
+### Development Workflow
+
+1. **Fork the Repository**
+2. **Create Feature Branch**
+```bash
+git checkout -b feature/your-feature-name
 ```
 
-## 🎯 Agent URL
+3. **Test Your Changes**
+```bash
+# Test both agents
+python agents/product_listing.py
+python agents/negotiator.py
+```
 
-**Live Agent**: https://agentverse.ai/agents/details/agent1qd2mu8zses2cxgd46wn9d79esn6u64juz00sg7w0qc5zsxa2v0fgs9c5a6w/profile
+4. **Commit and Push**
+```bash
+git commit -m "Add: your feature description"
+git push origin feature/your-feature-name
+```
 
-### Connecting to the Agent
+5. **Create Pull Request**
 
-1. Visit the Agentverse agent profile
-2. Click "Start Chat" or "Connect"
-3. Send a message with format: `[PRODUCT_ID] [Your message]`
-4. The agent will respond with professional negotiation
+### Code Standards
 
+- Follow existing code structure
+- Add comprehensive logging
+- Test with both agents
+- Update documentation
 
 ## 📄 License
 
-This project is part of the Adol AI Sales Agent ecosystem. See main project for licensing details.
+This project is part of the Adol AI Sales Agent ecosystem. Licensed under MIT License.
 
 ---
 
@@ -318,3 +483,9 @@ This project is part of the Adol AI Sales Agent ecosystem. See main project for 
 - [Agentverse Platform](https://agentverse.ai/)
 
 Built with ❤️ using Fetch.ai & Internet Computer Protocol
+
+## 📞 Support & Contact
+
+- **Issues**: [GitHub Issues](https://github.com/Hackathon-Hunter/adol-agents/issues)
+- **Documentation**: [Project Wiki](https://github.com/Hackathon-Hunter/adol-agents/wiki)
+- **Community**: Join our Discord for real-time support
